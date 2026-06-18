@@ -8,13 +8,15 @@ local function tm_is_toliss()
     return XPLMFindDataRef("AirbusFBW/ECAMFlightPhase") ~= nil
 end
 
-if not tm_is_toliss() then return end
-
--- Limit to Toliss narrowbodies
-if PLANE_ICAO ~= "A319" and PLANE_ICAO ~= "A321" and PLANE_ICAO ~= "A21N"
-and PLANE_ICAO ~= "A320" and PLANE_ICAO ~= "A20N" then
-    return
+local function is_valid_toliss_aircraft()
+    local icao = PLANE_ICAO
+    return icao == "A318" or icao == "A319" or icao == "A320" or icao == "A321"
 end
+
+if not tm_is_toliss() then return end
+if not is_valid_toliss_aircraft() then return end
+
+
 
 ----------------------------------------------------
 -- TAIL FREEZE

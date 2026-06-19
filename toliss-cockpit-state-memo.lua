@@ -77,7 +77,7 @@ local tracked_refs = {
     { name = "AirbusFBW/PedestalFloodBrightnessLevel", var = "PedFlood",   type = "float" },
     { name = "AirbusFBW/PanelFloodBrightnessLevel",    var = "PanelFlood", type = "float" },
     { name = "AirbusFBW/OHPBrightnessLevel",           var = "OHPFlood",   type = "float" },
-    { name = "ckpt/fped/lights/mainPedLeft/anim", var = "mainPedLeftAnim", type= "float"}, -- INTEG LT:MAIN PNL&PED
+    --{ name = "ckpt/fped/lights/mainPedLeft/anim", var = "mainPedLeftAnim", type= "float"}, -- INTEG LT:MAIN PNL&PED
 
     -- Cockpit Floods (CFU)
     { name = "ckpt/fcu/lights/left/anim", var = "FCULightLeft",  type = "float" },

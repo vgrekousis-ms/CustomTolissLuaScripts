@@ -77,6 +77,10 @@ local tracked_refs = {
     { name = "AirbusFBW/PedestalFloodBrightnessLevel", var = "PedFlood",   type = "float" },
     { name = "AirbusFBW/PanelFloodBrightnessLevel",    var = "PanelFlood", type = "float" },
     { name = "AirbusFBW/OHPBrightnessLevel",           var = "OHPFlood",   type = "float" },
+    -- Cockpit Floods
+    { name = "ckpt/fcu/lights/left/anim", var = "FCULightLeft",  type = "int" },
+    { name = "ckpt/fcu/lights/right/anim", var = "FCULightRight", type = "int" },
+
 
     -- ND brightness
     { name = "AirbusFBW/WXAlphaND1", var = "WXAlphaND1", type = "float" },

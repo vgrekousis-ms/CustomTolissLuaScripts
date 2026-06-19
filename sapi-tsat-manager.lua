@@ -87,8 +87,80 @@ local state = {
 
     -- Status
     lastStatus = "",
-    lastStatusTime = 0
+    lastStatusTime = 0,
+
+    -- Last API response
+    lastApiResponse = ""
 }
+
+-- ============================================================================
+-- Configuration Persistence
+-- ============================================================================
+
+local CONFIG_FILE = SCRIPT_DIRECTORY .. "sapi-tsat-config.ini"
+
+--- Save configuration to file
+local function saveConfig()
+    local f = io.open(CONFIG_FILE, "w")
+    if not f then
+        logMsg("[SAPI-TSAT] Failed to save config to: " .. CONFIG_FILE)
+        return false
+    end
+
+    f:write("# SayIntentions TSAT Manager Configuration\n")
+    f:write("# Generated: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
+    f:write("SAPI_API_KEY=" .. (CONFIG.SAPI_API_KEY or "") .. "\n")
+    f:write("SIMBRIEF_USERNAME=" .. (CONFIG.SIMBRIEF_USERNAME or "") .. "\n")
+    f:write("SIMBRIEF_USER_ID=" .. (CONFIG.SIMBRIEF_USER_ID or "") .. "\n")
+    f:write("SELECTED_STATION=" .. (state.selectedStation or "OPS") .. "\n")
+    f:write("MESSAGE_TYPE=" .. (state.selectedMessageType or "telex") .. "\n")
+    f:write("TSAT_OFFSET=" .. (state.tsatOffset or 10) .. "\n")
+
+    f:close()
+
+    logMsg("[SAPI-TSAT] Config saved to: " .. CONFIG_FILE)
+    return true
+end
+
+--- Load configuration from file
+local function loadConfig()
+    local f = io.open(CONFIG_FILE, "r")
+    if not f then
+        logMsg("[SAPI-TSAT] No config file found at: " .. CONFIG_FILE)
+        return false
+    end
+
+    logMsg("[SAPI-TSAT] Loading config from: " .. CONFIG_FILE)
+
+    for line in f:lines() do
+        -- Skip comments and empty lines
+        if not line:match("^#") and line:match("%S") then
+            local key, value = line:match("([^=]+)=([^=]*)")
+            if key and value then
+                key = key:gsub("^%s+", ""):gsub("%s+$", "")  -- trim
+                value = value:gsub("^%s+", ""):gsub("%s+$", "")  -- trim
+
+                if key == "SAPI_API_KEY" then
+                    CONFIG.SAPI_API_KEY = value
+                elseif key == "SIMBRIEF_USERNAME" then
+                    CONFIG.SIMBRIEF_USERNAME = value
+                elseif key == "SIMBRIEF_USER_ID" then
+                    CONFIG.SIMBRIEF_USER_ID = value
+                elseif key == "SELECTED_STATION" then
+                    state.selectedStation = value
+                elseif key == "MESSAGE_TYPE" then
+                    state.selectedMessageType = value
+                elseif key == "TSAT_OFFSET" then
+                    state.tsatOffset = tonumber(value) or 10
+                end
+            end
+        end
+    end
+
+    f:close()
+    logMsg("[SAPI-TSAT] Configuration loaded successfully")
+    return true
+end
 
 -- ============================================================================
 -- Initialization
@@ -96,6 +168,9 @@ local state = {
 
 --- Initialize API clients
 local function initClients()
+    -- Load saved configuration first
+    loadConfig()
+
     -- Initialize SayIntentions API
     state.sapiClient = SayIntentionsAPI:new(CONFIG.SAPI_API_KEY)
     state.sapiClient:setDebug(CONFIG.DEBUG)
@@ -104,7 +179,7 @@ local function initClients()
     state.simbriefClient = SimBriefClient:new(CONFIG.SIMBRIEF_USERNAME, CONFIG.SIMBRIEF_USER_ID)
     state.simbriefClient:setDebug(CONFIG.DEBUG)
 
-    -- Initialize input fields
+    -- Initialize input fields from loaded config
     state.apiKeyInput = CONFIG.SAPI_API_KEY
     state.simbriefUsernameInput = CONFIG.SIMBRIEF_USERNAME
     state.simbriefUserIdInput = CONFIG.SIMBRIEF_USER_ID
@@ -147,26 +222,76 @@ local function fetchFlightPlan()
 end
 
 --- Calculate TSAT from scheduled time
+--- Calculate TSAT (Target Start-Up Approval Time)
+-- TSAT is typically the scheduled off-block time minus taxi time
 local function calculateTSAT()
-    if not state.flightPlan or not state.flightPlan.offBlockTime then
+    if not state.flightPlan then
         return nil
     end
 
-    local scheduledTime = state.flightPlan.offBlockTime
+    -- Get scheduled off-block time (Unix timestamp)
+    local schedOffBlock = state.flightPlan.scheduledOff or state.flightPlan.estimatedOff
 
-    -- Parse time (format: HHmm)
-    if not scheduledTime or scheduledTime == "" then
+    if not schedOffBlock or schedOffBlock == "" then
         return nil
     end
 
-    -- For simplicity, just format as-is (would need proper time math for real offset)
-    -- Format: TSAT HHMMZ
-    return scheduledTime .. "Z"
+    -- Convert to number if string
+    local timestamp = tonumber(schedOffBlock)
+    if not timestamp then
+        return nil
+    end
+
+    -- TSAT is typically scheduled off-block minus the TSAT offset (default 10 minutes)
+    local tsatTimestamp = timestamp - (state.tsatOffset * 60)
+
+    -- Format as HHMMZ (Zulu time)
+    local timeTable = os.date("!*t", tsatTimestamp)
+    local tsat = string.format("%02d%02dZ", timeTable.hour, timeTable.min)
+
+    return tsat
 end
 
 -- ============================================================================
 -- CPDLC/TELEX Message Functions
 -- ============================================================================
+
+--- Generate TSAT message preview (without sending)
+local function generateTSATMessagePreview()
+    if not state.flightPlanLoaded or not state.flightPlan then
+        return "No flight plan loaded"
+    end
+
+    local tsat = calculateTSAT()
+    if not tsat then
+        return "Error: Could not calculate TSAT"
+    end
+
+    -- Build message
+    local origin = state.flightPlan.origin or "????"
+    local destination = state.flightPlan.destination or "????"
+    local callsign = state.flightPlan.callsign or "FLIGHT"
+    local runway = state.flightPlan.departureRunway or "RWY"
+
+    local message = string.format(
+        "STARTUP APPROVAL\n%s %s-%s\nTSAT %s\nRWY %s\nCTC GND READY",
+        callsign,
+        origin,
+        destination,
+        tsat,
+        runway
+    )
+
+    -- Station ID
+    local fromStation
+    if state.selectedStation:find(origin) then
+        fromStation = state.selectedStation
+    else
+        fromStation = origin .. " " .. state.selectedStation
+    end
+
+    return string.format("From: %s\n\n%s", fromStation, message)
+end
 
 --- Send TSAT message via SayIntentions
 local function sendTSATMessage()
@@ -185,19 +310,25 @@ local function sendTSATMessage()
     local origin = state.flightPlan.origin or "????"
     local destination = state.flightPlan.destination or "????"
     local callsign = state.flightPlan.callsign or "FLIGHT"
-    local gate = state.flightPlan.departureGate or "RAMP"
+    local runway = state.flightPlan.departureRunway or "RWY"
 
     local message = string.format(
-        "STARTUP APPROVAL\n%s %s-%s\nTSAT %s\nGATE %s\nCTC GND READY",
+        "STARTUP APPROVAL\n%s %s-%s\nTSAT %s\nRWY %s\nCTC GND READY",
         callsign,
         origin,
         destination,
         tsat,
-        gate
+        runway
     )
 
     -- Station ID (e.g., "KJFK OPS", "DISPATCH")
-    local fromStation = origin .. " " .. state.selectedStation
+    -- If selectedStation already includes airport code, use it as-is
+    local fromStation
+    if state.selectedStation:find(origin) then
+        fromStation = state.selectedStation
+    else
+        fromStation = origin .. " " .. state.selectedStation
+    end
 
     setStatus("Sending TSAT message...")
 
@@ -211,10 +342,40 @@ local function sendTSATMessage()
 
     if err then
         setStatus("Error sending message: " .. err)
+        state.lastApiResponse = "Error: " .. err
         return false
     end
 
-    setStatus("TSAT message sent successfully!")
+    -- Log and store the response
+    if response then
+        -- Format response for display
+        if type(response) == "table" then
+            -- Check what fields actually exist in the response
+            local responseText = ""
+            if response.status then
+                responseText = "Status: " .. tostring(response.status)
+                logMsg("[SAPI-TSAT] API Response Status: " .. tostring(response.status))
+            end
+            if response.error then
+                responseText = responseText .. "\nError: " .. tostring(response.error)
+                logMsg("[SAPI-TSAT] API Response Error: " .. tostring(response.error))
+            end
+            if response.message then
+                responseText = responseText .. "\nMessage: " .. tostring(response.message)
+                logMsg("[SAPI-TSAT] API Response Message: " .. tostring(response.message))
+            end
+
+            state.lastApiResponse = responseText ~= "" and responseText or "Response received (no details)"
+        else
+            state.lastApiResponse = tostring(response):sub(1, 500)  -- First 500 chars
+        end
+
+        setStatus("TSAT message sent successfully! " .. (response.status or "OK"))
+    else
+        state.lastApiResponse = "Success (no response data)"
+        setStatus("TSAT message sent successfully!")
+    end
+
     return true
 end
 
@@ -320,6 +481,17 @@ function drawWindow(wnd_id)
     end
 
     imgui.Spacing()
+
+    -- Save Configuration Button
+    if imgui.Button("Save Configuration", 200, 30) then
+        if saveConfig() then
+            state.lastStatus = "Configuration saved successfully!"
+        else
+            state.lastStatus = "Error: Could not save configuration"
+        end
+    end
+
+    imgui.Spacing()
     imgui.Separator()
     imgui.Spacing()
 
@@ -382,6 +554,22 @@ function drawWindow(wnd_id)
         imgui.TextUnformatted("Load flight plan first")
         imgui.PopStyleColor()
     else
+        -- Show message preview
+        imgui.TextUnformatted("Message Preview:")
+        imgui.Separator()
+        local preview = generateTSATMessagePreview()
+        -- Split by newline and display each line
+        local startPos = 1
+        while startPos <= #preview do
+            local endPos = preview:find("\n", startPos) or (#preview + 1)
+            local line = preview:sub(startPos, endPos - 1)
+            imgui.TextUnformatted(line)
+            startPos = endPos + 1
+        end
+        imgui.Separator()
+
+        imgui.Spacing()
+
         if imgui.Button("Send TSAT Message", 200, 35) then
             sendTSATMessage()
         end
@@ -395,6 +583,19 @@ function drawWindow(wnd_id)
             state.selectedStation = newStation
         end
         imgui.PopItemWidth()
+    end
+
+    imgui.Spacing()
+    imgui.Separator()
+    imgui.Spacing()
+
+    -- ========================================================================
+    -- API Response Display
+    -- ========================================================================
+
+    if state.lastApiResponse ~= "" then
+        imgui.TextUnformatted("Last API Response:")
+        imgui.TextUnformatted(state.lastApiResponse)
     end
 
     imgui.Spacing()

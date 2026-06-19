@@ -11,7 +11,7 @@ SayIntentionsAPI.__index = SayIntentionsAPI
 -- Configuration
 -- ============================================================================
 
-local BASE_URL = "https://apipri.sayintentions.ai/sapi/"
+local BASE_URL = "https://apipri.sayintentions.ai/sapi"
 
 -- ============================================================================
 -- Utility Functions
@@ -32,7 +32,7 @@ end
 
 --- Build URL with query parameters
 local function buildUrl(endpoint, params)
-    local url = BASE_URL .. endpoint
+    local url = BASE_URL .. "/" .. endpoint
     if params and next(params) ~= nil then
         local queryParams = {}
         for key, value in pairs(params) do
@@ -69,47 +69,53 @@ local function parseJSON(jsonString)
     return result
 end
 
---- Make HTTP GET request
-local function httpGet(url)
-    -- Try using LuaSocket if available
-    local http = require("socket.http")
-    local ltn12 = require("ltn12")
+--- Make HTTP GET request using curl (supports HTTPS)
+local function httpGet(url, debug)
+    -- Escape URL for command line (Windows-style)
+    local escapedUrl = '"' .. url .. '"'
 
-    local response_body = {}
-    local res, code, response_headers, status = http.request{
-        url = url,
-        method = "GET",
-        sink = ltn12.sink.table(response_body)
-    }
+    -- Try curl first (available on Windows 10+)
+    local command = 'curl -s -L ' .. escapedUrl
 
-    if code == 200 then
-        return true, table.concat(response_body)
+    local handle = io.popen(command)
+    if not handle then
+        return false, "Failed to execute HTTP request - curl not available"
+    end
+
+    local response = handle:read("*a")
+    local success, exit_reason, exit_code = handle:close()
+
+    if response and response ~= "" and not response:match("^curl:") then
+        if debug then
+            print("[SAPI] Response received: " .. response:sub(1, 200))
+        end
+        return true, response
     else
-        return false, "HTTP " .. tostring(code) .. ": " .. (status or "Unknown error")
+        return false, "HTTP request failed: " .. (response or "no response") .. " (exit: " .. tostring(exit_code) .. ")"
     end
 end
 
---- Make HTTP POST request
+--- Make HTTP POST request using curl (supports HTTPS)
 local function httpPost(url, postData)
-    local http = require("socket.http")
-    local ltn12 = require("ltn12")
+    -- Escape for command line
+    local escapedUrl = '"' .. url .. '"'
+    local escapedData = '"' .. postData:gsub('"', '\\"') .. '"'
 
-    local response_body = {}
-    local res, code, response_headers, status = http.request{
-        url = url,
-        method = "POST",
-        headers = {
-            ["Content-Type"] = "application/x-www-form-urlencoded",
-            ["Content-Length"] = tostring(#postData)
-        },
-        source = ltn12.source.string(postData),
-        sink = ltn12.sink.table(response_body)
-    }
+    -- Use curl for POST
+    local command = 'curl -s -L -X POST -d ' .. escapedData .. ' -H "Content-Type: application/x-www-form-urlencoded" ' .. escapedUrl
 
-    if code == 200 then
-        return true, table.concat(response_body)
+    local handle = io.popen(command)
+    if not handle then
+        return false, "Failed to execute HTTP request - curl not available"
+    end
+
+    local response = handle:read("*a")
+    local success, exit_reason, exit_code = handle:close()
+
+    if response and response ~= "" and not response:match("^curl:") then
+        return true, response
     else
-        return false, "HTTP " .. tostring(code) .. ": " .. (status or "Unknown error")
+        return false, "HTTP request failed: " .. (response or "no response") .. " (exit: " .. tostring(exit_code) .. ")"
     end
 end
 
@@ -155,22 +161,31 @@ function SayIntentionsAPI:_request(endpoint, params, method)
         params.api_key = self.apiKey
     end
 
-    local url = buildUrl(endpoint, params)
-
-    if self.debug then
-        print("[SAPI] " .. method .. " " .. url)
-    end
-
-    local success, response
     if method == "POST" then
+        -- For POST, send params in body, not URL
         local postData = ""
         for key, value in pairs(params) do
             if postData ~= "" then postData = postData .. "&" end
             postData = postData .. key .. "=" .. urlEncode(tostring(value))
         end
-        success, response = httpPost(BASE_URL .. endpoint, postData)
+
+        local url = BASE_URL .. endpoint
+
+        if self.debug then
+            print("[SAPI] " .. method .. " " .. url)
+            print("[SAPI] Body: " .. postData)
+        end
+
+        success, response = httpPost(url, postData)
     else
-        success, response = httpGet(url)
+        -- For GET, params in URL
+        local url = buildUrl(endpoint, params)
+
+        if self.debug then
+            print("[SAPI] " .. method .. " " .. url)
+        end
+
+        success, response = httpGet(url, self.debug)
     end
 
     if not success then

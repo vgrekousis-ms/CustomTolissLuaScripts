@@ -77,11 +77,11 @@ local tracked_refs = {
     { name = "AirbusFBW/PedestalFloodBrightnessLevel", var = "PedFlood",   type = "float" },
     { name = "AirbusFBW/PanelFloodBrightnessLevel",    var = "PanelFlood", type = "float" },
     { name = "AirbusFBW/OHPBrightnessLevel",           var = "OHPFlood",   type = "float" },
-    --{ name = "ckpt/fped/lights/mainPedLeft/anim", var = "mainPedLeftAnim", type= "float"}, -- INTEG LT:MAIN PNL&PED
+    --{ name = "ckpt/fped/lights/mainPedLeft/anim", var = "mainPedLeftAnim", type= "float"}, -- INTEG LT:MAIN PNL&PED  -- Only alters the switch animation, not the actual brightness. Find the right dataref if existing.
 
     -- Cockpit Floods (CFU)
-    { name = "ckpt/fcu/lights/left/anim", var = "FCULightLeft",  type = "float" },
-    { name = "ckpt/fcu/lights/right/anim", var = "FCULightRight", type = "float" },
+    { name = "ckpt/fcu/lights/left/anim", var = "FCULightLeft",  type = "float" }, -- No effect, find the right datarefs if existing.
+    { name = "ckpt/fcu/lights/right/anim", var = "FCULightRight", type = "float" }, -- No effect, find the right datarefs if existing.
 
 
     -- ND brightness

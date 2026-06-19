@@ -100,6 +100,7 @@ local tracked_refs = {
     { name = "AirbusFBW/AudioSwitching", var = "AudioSwitching", type = "int" },
     { name = "ckpt/oh/wiperRight/anim", var = "wiperRightAnim", type = "int" },
     { name = "ckpt/oh/wiperLeft/anim",  var = "wiperLeftAnim",  type = "int" },
+    { name = "ckpt/oh/domeLight/anim",  var = "domeLightAnim",  type = "int" },
 
     -- Pedestal switching
     { name = "AirbusFBW/DMCSwitching",      var = "DMCSwitching",      type = "int" },

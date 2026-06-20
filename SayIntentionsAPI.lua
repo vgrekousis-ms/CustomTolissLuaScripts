@@ -13,12 +13,36 @@ SayIntentionsAPI.__index = SayIntentionsAPI
 
 local BASE_URL = "https://apipri.sayintentions.ai/sapi"
 
+-- Helper to run commands silently on Windows
+local CURL_WRAPPER_VBS = nil
+local function getCurlWrapper()
+    if not CURL_WRAPPER_VBS then
+        CURL_WRAPPER_VBS = os.getenv("TEMP") .. "\\flywithlua_curl.vbs"
+        local f = io.open(CURL_WRAPPER_VBS, "w")
+        if f then
+            f:write([[
+Set objArgs = WScript.Arguments
+Set objShell = CreateObject("WScript.Shell")
+Set objExec = objShell.Exec(objArgs(0))
+Do While Not objExec.StdOut.AtEndOfStream
+    WScript.Echo objExec.StdOut.ReadLine()
+Loop
+]])
+            f:close()
+            print("[SAPI] Created VBS wrapper at: " .. CURL_WRAPPER_VBS)
+        else
+            print("[SAPI] ERROR: Could not create VBS wrapper at: " .. CURL_WRAPPER_VBS)
+        end
+    end
+    return CURL_WRAPPER_VBS
+end
+
 -- ============================================================================
 -- Utility Functions
 -- ============================================================================
 
 --- URL encode a string
-local function urlEncode(str)
+local function _urlEncode(str)
     if str then
         str = string.gsub(str, "\n", "\r\n")
         str = string.gsub(str, "([^%w %-%_%.])",
@@ -29,6 +53,18 @@ local function urlEncode(str)
     end
     return str
 end
+
+local function urlEncode(str)
+    -- encode ONLY characters curl rejects
+    str = str:gsub("\n", "%%0A")
+    str = str:gsub("\r", "%%0D")
+    str = str:gsub(" ", "%%20")   -- optional, but safe
+    str = str:gsub("%%", "%%%%")  -- escape literal %
+    return str
+end
+
+
+
 
 --- Build URL with query parameters
 local function buildUrl(endpoint, params)
@@ -42,6 +78,29 @@ local function buildUrl(endpoint, params)
     end
     return url
 end
+
+local function _buildUrl(endpoint, params)
+    local url = BASE_URL .. "/" .. endpoint
+    if params and next(params) ~= nil then
+        local queryParams = {}
+        for key, value in pairs(params) do
+            local v = tostring(value)
+
+            if key == "message" then
+                -- DO NOT encode @ in the message
+                -- Option A: no encoding at all for message
+                -- v stays as-is: "@BLUE@"
+            else
+                v = urlEncode(v)
+            end
+
+            table.insert(queryParams, key .. "=" .. v)
+        end
+        url = url .. "?" .. table.concat(queryParams, "&")
+    end
+    return url
+end
+
 
 --- Parse JSON response (basic implementation)
 local function parseJSON(jsonString)
@@ -71,51 +130,113 @@ end
 
 --- Make HTTP GET request using curl (supports HTTPS)
 local function httpGet(url, debug)
-    -- Escape URL for command line (Windows-style)
-    local escapedUrl = '"' .. url .. '"'
+    local tempOut = os.tmpname() .. ".txt"
 
-    -- Try curl first (available on Windows 10+)
-    local command = 'curl -s -L ' .. escapedUrl
+    -- Log the full URL for debugging (using logMsg so it shows in Log.txt)
+    logMsg("[SAPI] GET Request to URL: " .. url)
 
-    local handle = io.popen(command)
-    if not handle then
-        return false, "Failed to execute HTTP request - curl not available"
+    -- Create a batch file to run curl silently
+    local tempBat = os.tmpname() .. ".bat"
+    local bat = io.open(tempBat, "w")
+    if not bat then
+        logMsg("[SAPI] ERROR: Cannot create batch file")
+        return false, "Cannot create temp batch file"
     end
 
-    local response = handle:read("*a")
-    local success, exit_reason, exit_code = handle:close()
+    bat:write('@echo off\n')
+    bat:write('curl.exe -s -S -L "' .. url:gsub('"', '""') .. '" 2>&1\n')
+    bat:close()
 
-    if response and response ~= "" and not response:match("^curl:") then
-        if debug then
-            print("[SAPI] Response received: " .. response:sub(1, 200))
+    -- Run batch file hidden using START with /B flag and redirect to file
+    local command = 'cmd.exe /c ""' .. tempBat .. '" > "' .. tempOut .. '""'
+    logMsg("[SAPI] GET Executing curl")
+
+    os.execute(command)
+
+    -- Wait for completion
+    local maxWait = 30  -- 3 seconds max
+    local waited = 0
+    while waited < maxWait do
+        os.execute("ping -n 1 127.0.0.1 > nul 2>&1")
+        waited = waited + 1
+
+        -- Check if file has content
+        local f = io.open(tempOut, "r")
+        if f then
+            local content = f:read("*a")
+            f:close()
+            if #content > 0 then
+                break
+            end
         end
+    end
+
+    -- Read result
+    local f = io.open(tempOut, "r")
+    local response = ""
+    if f then
+        response = f:read("*a")
+        f:close()
+        logMsg("[SAPI] GET Read " .. #response .. " bytes")
+    else
+        logMsg("[SAPI] GET ERROR: Could not read temp file")
+    end
+
+    -- Cleanup
+    os.remove(tempBat)
+    os.remove(tempOut)
+
+    if #response > 0 then
+        logMsg("[SAPI] GET Response (first 200 chars): " .. response:sub(1, 200))
+    else
+        logMsg("[SAPI] GET ERROR: Empty response - check if curl.exe exists and URL is accessible")
+    end
+
+    if response and #response > 0 and not response:match("^curl:") and not response:match("Could not resolve host") then
         return true, response
     else
-        return false, "HTTP request failed: " .. (response or "no response") .. " (exit: " .. tostring(exit_code) .. ")"
+        return false, "HTTP GET failed: " .. (response or "no response"):sub(1, 100)
     end
 end
 
 --- Make HTTP POST request using curl (supports HTTPS)
 local function httpPost(url, postData)
-    -- Escape for command line
-    local escapedUrl = '"' .. url .. '"'
-    local escapedData = '"' .. postData:gsub('"', '\\"') .. '"'
+    local tempOut = os.tmpname() .. ".txt"
 
-    -- Use curl for POST
-    local command = 'curl -s -L -X POST -d ' .. escapedData .. ' -H "Content-Type: application/x-www-form-urlencoded" ' .. escapedUrl
+    -- Use direct curl without VBS wrapper
+    local command = 'curl.exe -s -L -X POST -d "' .. postData:gsub('"', '""') .. '" -H "Content-Type: application/x-www-form-urlencoded" "' .. url:gsub('"', '""') .. '" > "' .. tempOut .. '" 2>&1'
 
-    local handle = io.popen(command)
-    if not handle then
-        return false, "Failed to execute HTTP request - curl not available"
+    print("[SAPI] POST Executing curl")
+
+    -- Use cmd /c with START /B to run in background
+    os.execute('cmd /c "' .. command .. '"')
+
+    -- Small delay to ensure file is written
+    os.execute("ping -n 1 127.0.0.1 > nul 2>&1")
+
+    -- Read result
+    local f = io.open(tempOut, "r")
+    local response = ""
+    if f then
+        response = f:read("*a")
+        f:close()
+        print("[SAPI] POST Read " .. #response .. " bytes from temp file")
+    else
+        print("[SAPI] POST ERROR: Could not open temp file: " .. tempOut)
     end
 
-    local response = handle:read("*a")
-    local success, exit_reason, exit_code = handle:close()
+    -- Cleanup
+    os.remove(tempOut)
 
-    if response and response ~= "" and not response:match("^curl:") then
+    print("[SAPI] POST Response length: " .. #response)
+    if #response > 0 then
+        print("[SAPI] POST Response content: " .. response:sub(1, 200))
+    end
+
+    if response and #response > 0 and not response:match("^curl:") then
         return true, response
     else
-        return false, "HTTP request failed: " .. (response or "no response") .. " (exit: " .. tostring(exit_code) .. ")"
+        return false, "HTTP POST request failed: empty or error response (length: " .. #response .. ", content: " .. tostring(response):sub(1, 100) .. ")"
     end
 end
 
@@ -127,8 +248,9 @@ end
 -- @param apiKey string Your SayIntentions.AI API key
 -- @return table API client instance
 function SayIntentionsAPI:new(apiKey)
+    --print("[SAPI] Initializing SayIntentionsAPI with API key length: " .. (apiKey and #apiKey or 0))
     local instance = {
-        apiKey = apiKey or "",
+        apiKey = apiKey or "sivmN8pGao59",
         lastError = nil,
         debug = false
     }
@@ -159,6 +281,9 @@ function SayIntentionsAPI:_request(endpoint, params, method)
     -- Add API key to parameters
     if self.apiKey and self.apiKey ~= "" then
         params.api_key = self.apiKey
+        logMsg("[SAPI] API key is set (length: " .. #self.apiKey .. ")")
+    else
+        logMsg("[SAPI] WARNING: API key is NOT set!")
     end
 
     if method == "POST" then
@@ -193,8 +318,23 @@ function SayIntentionsAPI:_request(endpoint, params, method)
         return nil, response
     end
 
+    -- Log raw response for debugging
+    if self.debug or true then -- Always log for now to debug
+        print("[SAPI] Raw response: " .. tostring(response):sub(1, 500))
+    end
+
     -- Parse JSON response
     local data = parseJSON(response)
+
+    -- Log parsed data
+    if self.debug or true then
+        print("[SAPI] Parsed data type: " .. type(data))
+        if type(data) == "table" then
+            for k, v in pairs(data) do
+                print("[SAPI] Parsed field: " .. k .. " = " .. tostring(v))
+            end
+        end
+    end
 
     -- Check for API error in response
     if data.error then
@@ -465,11 +605,12 @@ function SayIntentionsAPI:crewSay(message, rephrase)
 end
 
 --- Send ACARS message
-function SayIntentionsAPI:sendACARSMessage(message, from, responseCode, messageType)
+function SayIntentionsAPI:sendACARSMessage(message, from, responseCode, messageType, rephraseResponse)
     local options = {
         from = from,
         response_code = responseCode,
-        message_type = messageType or "cpdlc"
+        message_type = messageType or "cpdlc",
+		rephrase = rephraseResponse
     }
     return self:sayAs("ACARS_IN", message, options)
 end

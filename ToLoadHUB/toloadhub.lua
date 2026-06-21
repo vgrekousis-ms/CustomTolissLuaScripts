@@ -153,6 +153,9 @@ local toLoadHub = {
         units = nil,
         origin = nil,
         destination = nil,
+		aircraft = {
+			reg = nil,
+		},
     },
     settings = {
         general = {
@@ -463,6 +466,12 @@ local function setIsLib()
     end
 end
 
+local function stripRegSymbols(reg)
+    if not reg then return "" end
+    return reg:gsub("[^A-Za-z0-9]", "")
+end
+
+
 local function fetchSimbriefFPlan()
     if not toLoadHub.settings.simbrief.username or toLoadHub.settings.simbrief.username:gsub("^%s*(.-)%s*$", "%1") == "" then
         toLoadHub.error_message = "Simbrief username not set."
@@ -564,7 +573,10 @@ local function fetchSimbriefFPlan()
 	local pax_weight = xml_data:find("pax_weight")
     local bag_count_actual = xml_data:find("bag_count_actual")
     toLoadHub.bag_count_actual = tonumber(bag_count_actual[1])
-
+	
+	 local aircraft_tag = xml_data:find("reg")[1]
+	 toLoadHub.simbrief.aircraft.reg = stripRegSymbols(aircraft_tag) --tostring(aircraft_tag[1])
+ 
      if toLoadHub.simbrief.units:lower() == 'lbs' then
         toLoadHub.is_lbs = true
         toLoadHub.cargo = convertToKgs(tonumber(cargo[1]))
@@ -734,6 +746,7 @@ local function resetAirplaneParameters(initJetway)
     for key in pairs(toLoadHub.simbrief) do
         toLoadHub.simbrief[key] = nil
     end
+	toLoadHub.simbrief.aircraft = { reg = nil }
     if not toLoadHub.first_init and toLoadHub.settings.simbrief.auto_fetch then
         fetchSimbriefFPlan()
     end
@@ -1049,7 +1062,7 @@ local function sendLoadsheetViaSayIntentions(data, loadSheetContent, requireResp
 		toLoadHub.simbrief.origin,
         respCode, -- No response expected
         "telex", -- Message type
-		1 -- Rephrase
+		0 -- Rephrase
 		
     )
 
@@ -1229,13 +1242,15 @@ local function sendLoadsheetToToliss(data)
 			
 			-- PRELIM / FINAL
 			loadSheetContent = string.format(
-				"LOADSHEET %s %s ZFW @%s@ GWCG @%s@ FUEL @%s@ PAX @%s@ DEST @LGAV@",
+				"LOADSHEET %s %s %s ZFW @%s@ GWCG @%s@ FUEL @%s@ PAX @%s@ DEST @%s@",
 				data.labelText,      -- PRELIM or FINAL
 				t,
+				toLoadHub.simbrief.aircraft.reg,
 				r1(data.zfw),
 				data.gwcg,
 				tostring(data.f_blk),
-				tostring(data.pax)
+				tostring(data.pax),
+				toLoadHub.simbrief.origin
 			)
 			print("[SI-LOADSHEET] >>> " .. loadSheetContent .. "; REQUIRE RESPONSE: ".. tostring(requireResponse))
 
@@ -1264,7 +1279,7 @@ local function sendLoadsheetToToliss(data)
 	end
 
     -- final safety trim
-    --loadSheetContent = loadSheetContent:sub(1, 120)
+    loadSheetContent = loadSheetContent:sub(1, 120)
 	--loadSheetContent = loadSheetContent:sub(1, 120):gsub("@$", "")
 
 end

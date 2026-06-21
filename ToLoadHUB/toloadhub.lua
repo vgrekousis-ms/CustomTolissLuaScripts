@@ -1023,6 +1023,35 @@ local function formatRowLoadSheet(label, value, digit)
     return label .. string.rep(".", digit - #label - #tostring(value)) .. tostring(" @" .. value .. "@ ")
 end
 
+local function mcduWrapFirstLine23(text)
+    -- split into first line + rest
+    local first, rest = text:match("([^\n]*)\n?(.*)")
+
+    if not first then
+        return text
+    end
+
+    -- wrap first line at 23 chars
+    local out = {}
+    local len = #first
+    for i = 1, len, 23 do
+        table.insert(out, first:sub(i, i + 22))
+    end
+    local wrappedFirst = table.concat(out, "\r")
+
+    -- convert remaining \n to \r but DO NOT wrap them
+    if rest ~= "" then
+        rest = rest:gsub("\n", "\r")
+        return wrappedFirst .. "\r" .. rest
+    else
+        return wrappedFirst
+    end
+end
+
+
+
+
+
 local function toZulu(hhmm)
     local h, m = hhmm:match("^(%d%d):(%d%d)$")
     if not h then return hhmm end
@@ -1240,18 +1269,27 @@ local function sendLoadsheetToToliss(data)
 			
 			--loadSheetContent = "DEBUG TEXT IN COLOR @BLUE@"
 			
-			-- PRELIM / FINAL
-			loadSheetContent = string.format(
-				"LOADSHEET %s %s %s ZFW @%s@ GWCG @%s@ FUEL @%s@ PAX @%s@ DEST @%s@",
-				data.labelText,      -- PRELIM or FINAL
-				t,
-				toLoadHub.simbrief.aircraft.reg,
-				r1(data.zfw),
-				data.gwcg,
-				tostring(data.f_blk),
-				tostring(data.pax),
-				toLoadHub.simbrief.origin
-			)
+			local displayPax = toLoadHub.settings.hoppie.display_pax
+
+local paxSegment = ""
+if displayPax then
+    paxSegment = string.format(" PAX @%s@ ", tostring(data.pax))
+end
+
+loadSheetContent = string.format(
+    "LOADSHEET %s %s %s ZFW @%s@ GWCG @%s@ FUEL @%s@ %sDEST @%s@",
+    data.labelText,      -- PRELIM or FINAL
+    t,
+    toLoadHub.simbrief.aircraft.reg,
+    r1(data.zfw),
+    data.gwcg,
+    tostring(data.f_blk),
+    paxSegment,
+    toLoadHub.simbrief.origin
+)
+			
+			--loadSheetContent = mcduWrapFirstLine23(loadSheetContent)
+			
 			print("[SI-LOADSHEET] >>> " .. loadSheetContent .. "; REQUIRE RESPONSE: ".. tostring(requireResponse))
 
 		elseif data.typeL == 2 then

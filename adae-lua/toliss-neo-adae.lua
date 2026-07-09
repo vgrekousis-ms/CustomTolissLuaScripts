@@ -48,7 +48,7 @@ local ADAE_SOUND_INDEX = 0
 -- === ADAE Config State ===
 local last_tailnum = ""
 local ADAE_enabled = false
-local ADAE_impose_A21N = true
+local ADAE_impose_A21N = false  -- Set to true to restrict ADAE to A21N ICAO type only, false allows other Airbus types.
 local ADAE_tail_list = {}
 
 -- === Helpers ===
@@ -138,6 +138,12 @@ end
 function ADAE_CanStart()
     -- Most commonly this feature is found on A321 neos.
     if ACF_ICAO ~= "A21N" and ADAE_impose_A21N == true then return false end
+
+    --- If the user has disabled the A21N restriction, then we allow any of the following ICAO types.
+   if ADAE_impose_A21N == false and (ACF_ICAO ~= "A21N" and ACF_ICAO ~= "A321" and ACF_ICAO ~= "A320" and ACF_ICAO ~= "A20N" and ACF_ICAO ~= "A319") then
+        return false
+   end
+
 
     if SIM_PERIOD_DR == nil or SIM_PERIOD_DR == 0 then
         return false

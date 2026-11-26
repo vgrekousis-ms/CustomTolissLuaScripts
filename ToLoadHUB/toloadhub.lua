@@ -512,17 +512,17 @@ local function fetchSimbriefFPlan()
     toLoadHub.simbrief.origin = origin[1]
     if toLoadHub.simbrief.origin then
         local next_airport_index = XPLMFindNavAid( nil, nil, LATITUDE, LONGITUDE, nil, xplm_Nav_Airport)
-        if next_airport_index then
-            local _, _, _, _, _, _, airpICAO, airpNAME = XPLMGetNavAidInfo( next_airport_index )
-            if airpICAO:lower() ~= toLoadHub.simbrief.origin:lower() then
-                toLoadHub.error_message = string.format("SimBrief flight plan departure from %s \ndoes not match current location %s (%s).", toLoadHub.simbrief.origin, 
-                    airpNAME, airpICAO) 
-                debug(string.format("[%s] Simbrief ICAO Not matching %s -> %s", toLoadHub.title, 
-                    toLoadHub.simbrief.origin, airpICAO))
-                toLoadHub.simbrief.origin = nil
-                return false
-            end
-        end
+        --if next_airport_index then
+        --    local _, _, _, _, _, _, airpICAO, airpNAME = XPLMGetNavAidInfo( next_airport_index )
+        --    if airpICAO:lower() ~= toLoadHub.simbrief.origin:lower() then
+        --        toLoadHub.error_message = string.format("SimBrief flight plan departure from %s \ndoes not match current location %s (%s).", toLoadHub.simbrief.origin, 
+        --            airpNAME, airpICAO) 
+        --        debug(string.format("[%s] Simbrief ICAO Not matching %s -> %s", toLoadHub.title, 
+        --            toLoadHub.simbrief.origin, airpICAO))
+        --        toLoadHub.simbrief.origin = nil
+        --        return false
+        --    end
+        --end
     end
 
     local pax_count = xml_data:find("pax_count")
@@ -602,7 +602,7 @@ local function fetchSimbriefFPlan()
     toLoadHub.simbrief.bag_count_actual = toLoadHub.bag_count_actual
 	doRandomizePassengerBagWeightPerPaxCountToCargo()
 
-    XPLMSpeakString("Simbrief Data Acquired")
+    --XPLMSpeakString("Simbrief Data Acquired")
     debug(string.format("[%s] SimBrief XML downloaded and parsed.", toLoadHub.title))
     -- TODO
 end
@@ -932,11 +932,24 @@ local function closeDoors(boarding)
     end
 end
 
--- Comprehensive AC power check
 
 local function is_ac_powered()
-	return (GPU_ON == 1 or APU_GEN == 1)
+    -- Non‑A346 logic
+    if PLANE_ICAO ~= "A346" then
+        return (GPU_ON == 1 or APU_GEN == 1)
+    end
+	
+	 -- A346: treat AC_VOLTS_ARR as a single scalar
+    local volts = AC_VOLTS_ARR
+
+    if volts ~= nil and volts > 50 then
+        return true
+    end
+
+    return false
+	
 end
+
 
 local function closeDoorsCargo()
 	if not is_ac_powered() then return end
@@ -1285,7 +1298,7 @@ loadSheetContent = string.format(
     data.gwcg,
     tostring(data.f_blk),
     paxSegment,
-    toLoadHub.simbrief.origin
+    toLoadHub.simbrief.destination
 )
 			
 			--loadSheetContent = mcduWrapFirstLine23(loadSheetContent)
@@ -2166,7 +2179,7 @@ function viewToLoadHubWindowSettings()
         -- Re-initialize client if needed
         if newval and toLoadHub.settings.sayintentions.api_key ~= "" and SayIntentionsAPI then
             --XPLMSpeakString("SayIntentions enabled. Please ensure your API key is valid.")
-            sapiClient = SayIntentionsAPI.new(toLoadHub.settings.sayintentions.api_key)
+            sapiClient = SayIntentionsAPI:new(toLoadHub.settings.sayintentions.api_key)
             --XPLMSpeakString("SayIntentions client initialized with API key.")
             logMsg("[ToLoadHUB] SayIntentions client initialized")
         end
@@ -2179,7 +2192,7 @@ function viewToLoadHubWindowSettings()
         toLoadHub.settings.sayintentions.api_key , setSave = newval, true 
         -- Re-initialize client if SayIntentions is enabled
         if toLoadHub.settings.sayintentions.use_sayintentions and SayIntentionsAPI then
-            sapiClient = SayIntentionsAPI.new(newval)
+            sapiClient = SayIntentionsAPI:new(newval)
             logMsg("[ToLoadHUB] SayIntentions client re-initialized with new API key")
         end
     end
@@ -2765,6 +2778,8 @@ dataref("toLoadHub_CateringDoors_2", "AirbusFBW/PaxDoorModeArray", "writeable", 
 
 dataref("GPU_ON", "sim/cockpit/electrical/gpu_on", "readonly")
 dataref("APU_GEN", "sim/cockpit2/electrical/APU_generator_on", "readonly")
+dataref("AC_VOLTS_ARR", "AirbusFBW/ACBusVoltages", "readonly", 2)
+
 
 
 
@@ -2874,7 +2889,7 @@ if toLoadHub.settings.sayintentions.api_key then
 end
 
 if SayIntentionsAPI and toLoadHub.settings.sayintentions.api_key and toLoadHub.settings.sayintentions.api_key ~= "" then
-    sapiClient = SayIntentionsAPI.new(toLoadHub.settings.sayintentions.api_key)
+    sapiClient = SayIntentionsAPI:new(toLoadHub.settings.sayintentions.api_key)
     logMsg("[ToLoadHUB] SayIntentions client initialized with API key")
     XPLMSpeakString("SayIntentions enabled. API key is set.")
 else

@@ -13,30 +13,6 @@ SayIntentionsAPI.__index = SayIntentionsAPI
 
 local BASE_URL = "https://apipri.sayintentions.ai/sapi"
 
--- Helper to run commands silently on Windows
-local CURL_WRAPPER_VBS = nil
-local function getCurlWrapper()
-    if not CURL_WRAPPER_VBS then
-        CURL_WRAPPER_VBS = os.getenv("TEMP") .. "\\flywithlua_curl.vbs"
-        local f = io.open(CURL_WRAPPER_VBS, "w")
-        if f then
-            f:write([[
-Set objArgs = WScript.Arguments
-Set objShell = CreateObject("WScript.Shell")
-Set objExec = objShell.Exec(objArgs(0))
-Do While Not objExec.StdOut.AtEndOfStream
-    WScript.Echo objExec.StdOut.ReadLine()
-Loop
-]])
-            f:close()
-            print("[SAPI] Created VBS wrapper at: " .. CURL_WRAPPER_VBS)
-        else
-            print("[SAPI] ERROR: Could not create VBS wrapper at: " .. CURL_WRAPPER_VBS)
-        end
-    end
-    return CURL_WRAPPER_VBS
-end
-
 -- ============================================================================
 -- Utility Functions
 -- ============================================================================
@@ -59,7 +35,7 @@ local function urlEncode(str)
     str = str:gsub("\n", "%%0A")
     str = str:gsub("\r", "%%0D")
     str = str:gsub(" ", "%%20")   -- optional, but safe
-    str = str:gsub("%%", "%%%%")  -- escape literal %
+    --str = str:gsub("%%", "%%%%")  -- escape literal %
     return str
 end
 
@@ -128,117 +104,63 @@ local function parseJSON(jsonString)
     return result
 end
 
---- Make HTTP GET request using curl (supports HTTPS)
 local function httpGet(url, debug)
-    local tempOut = os.tmpname() .. ".txt"
 
-    -- Log the full URL for debugging (using logMsg so it shows in Log.txt)
-    logMsg("[SAPI] GET Request to URL: " .. url)
+    local cmd =
+        'curl -s -L --max-time 15 -w "\\nHTTP_STATUS:%{http_code}" "' ..
+        url ..
+        '" 2>&1'
 
-    -- Create a batch file to run curl silently
-    local tempBat = os.tmpname() .. ".bat"
-    local bat = io.open(tempBat, "w")
-    if not bat then
-        logMsg("[SAPI] ERROR: Cannot create batch file")
-        return false, "Cannot create temp batch file"
+    local pipe = io.popen(cmd)
+
+    if not pipe then
+        return false, "Could not start curl"
     end
 
-    bat:write('@echo off\n')
-    bat:write('curl.exe -s -S -L "' .. url:gsub('"', '""') .. '" 2>&1\n')
-    bat:close()
+    local response = pipe:read("*a")
 
-    -- Run batch file hidden using START with /B flag and redirect to file
-    local command = 'cmd.exe /c ""' .. tempBat .. '" > "' .. tempOut .. '""'
-    logMsg("[SAPI] GET Executing curl")
+	logMsg("[FlyWithLua.SayIntentionsAPI (httpGet)] Closing pipe")
+    pipe:close()
+	logMsg("[FlyWithLua.SayIntentionsAPI (httpGet)] Pipe closed")
 
-    os.execute(command)
-
-    -- Wait for completion
-    local maxWait = 30  -- 3 seconds max
-    local waited = 0
-    while waited < maxWait do
-        os.execute("ping -n 1 127.0.0.1 > nul 2>&1")
-        waited = waited + 1
-
-        -- Check if file has content
-        local f = io.open(tempOut, "r")
-        if f then
-            local content = f:read("*a")
-            f:close()
-            if #content > 0 then
-                break
-            end
-        end
-    end
-
-    -- Read result
-    local f = io.open(tempOut, "r")
-    local response = ""
-    if f then
-        response = f:read("*a")
-        f:close()
-        logMsg("[SAPI] GET Read " .. #response .. " bytes")
-    else
-        logMsg("[SAPI] GET ERROR: Could not read temp file")
-    end
-
-    -- Cleanup
-    os.remove(tempBat)
-    os.remove(tempOut)
-
-    if #response > 0 then
-        logMsg("[SAPI] GET Response (first 200 chars): " .. response:sub(1, 200))
-    else
-        logMsg("[SAPI] GET ERROR: Empty response - check if curl.exe exists and URL is accessible")
-    end
-
-    if response and #response > 0 and not response:match("^curl:") and not response:match("Could not resolve host") then
+    if response and #response > 0 then
         return true, response
-    else
-        return false, "HTTP GET failed: " .. (response or "no response"):sub(1, 100)
     end
+
+    return false, "Empty response"
 end
 
---- Make HTTP POST request using curl (supports HTTPS)
 local function httpPost(url, postData)
-    local tempOut = os.tmpname() .. ".txt"
 
-    -- Use direct curl without VBS wrapper
-    local command = 'curl.exe -s -L -X POST -d "' .. postData:gsub('"', '""') .. '" -H "Content-Type: application/x-www-form-urlencoded" "' .. url:gsub('"', '""') .. '" > "' .. tempOut .. '" 2>&1'
+    local cmd =
+        'curl -s -L --max-time 15 ' ..
+        '-X POST ' ..
+        '-H "Content-Type: application/x-www-form-urlencoded" ' ..
+        '-d "' .. postData:gsub('"', '\\"') .. '" ' ..
+        '-w "\\nHTTP_STATUS:%{http_code}" "' ..
+        url ..
+        '" 2>&1'
 
-    print("[SAPI] POST Executing curl")
+    local pipe = io.popen(cmd)
 
-    -- Use cmd /c with START /B to run in background
-    os.execute('cmd /c "' .. command .. '"')
-
-    -- Small delay to ensure file is written
-    os.execute("ping -n 1 127.0.0.1 > nul 2>&1")
-
-    -- Read result
-    local f = io.open(tempOut, "r")
-    local response = ""
-    if f then
-        response = f:read("*a")
-        f:close()
-        print("[SAPI] POST Read " .. #response .. " bytes from temp file")
-    else
-        print("[SAPI] POST ERROR: Could not open temp file: " .. tempOut)
+    if not pipe then
+        return false, "Could not start curl"
     end
 
-    -- Cleanup
-    os.remove(tempOut)
+    local response = pipe:read("*a")
 
-    print("[SAPI] POST Response length: " .. #response)
-    if #response > 0 then
-        print("[SAPI] POST Response content: " .. response:sub(1, 200))
-    end
+	logMsg("[FlyWithLua.SayIntentionsAPI (httpPost)] Closing pipe")
+    pipe:close()
+	logMsg("[FlyWithLua.SayIntentionsAPI (httpPost)] Pipe closed")
+	
 
-    if response and #response > 0 and not response:match("^curl:") then
+    if response and #response > 0 then
         return true, response
-    else
-        return false, "HTTP POST request failed: empty or error response (length: " .. #response .. ", content: " .. tostring(response):sub(1, 100) .. ")"
     end
+
+    return false, "Empty response"
 end
+
 
 -- ============================================================================
 -- Constructor
@@ -277,6 +199,7 @@ end
 function SayIntentionsAPI:_request(endpoint, params, method)
     params = params or {}
     method = method or "GET"
+    local success, response
 
     -- Add API key to parameters
     if self.apiKey and self.apiKey ~= "" then
@@ -294,7 +217,7 @@ function SayIntentionsAPI:_request(endpoint, params, method)
             postData = postData .. key .. "=" .. urlEncode(tostring(value))
         end
 
-        local url = BASE_URL .. endpoint
+        local url = BASE_URL .. "/" .. endpoint
 
         if self.debug then
             print("[SAPI] " .. method .. " " .. url)

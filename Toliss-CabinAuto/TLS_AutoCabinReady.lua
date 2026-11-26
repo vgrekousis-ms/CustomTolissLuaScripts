@@ -8,6 +8,11 @@ else
     dataref("TOC_GSPD", "sim/cockpit2/gauges/indicators/ground_speed_kt", "readonly")
 	dataref("TOC_ECAM_PHASE", "AirbusFBW/ECAMFlightPhase", "readonly")
     dataref("TOC_CKPT_DOOR", "ckpt/door", "writable")
+	
+	--- 0: Switch: Unlock
+	--- 1: Switch: Arm
+	--- 2: Switch: Lock
+	dataref("TOC_CKPT_DOORLOCK", "ckpt/doorLock", "writable")
 
     -- Optional / future:
     -- dataref("TOC_ENG1_N1", "sim/flightmodel/engine/ENGN_N1_[0]", "readonly")
@@ -31,12 +36,28 @@ else
         -- Toggle cockpit door state
         if TOC_is_cockpit_door_open() then
             TOC_CKPT_DOOR = 0
+			TOC_CKPT_DOORLOCK = 2
             -- Close
         else
+			TOC_CKPT_DOORLOCK = 0
             TOC_CKPT_DOOR = 80
+			TOC_CKPT_DOORLOCK = 1
             -- Open
         end
     end
+	
+	function TOC_close_cockpit_door_withlock(lock)
+		if TOC_is_cockpit_door_open() then
+			TOC_CKPT_DOOR = 0
+			if (lock) then
+				TOC_CKPT_DOORLOCK = 2
+			end
+		end
+	end
+	
+	function TOC_close_cockpit_door()
+		TOC_close_cockpit_door_withlock(false)
+	end
 
     -- Helper: compute cabin delay based on pax
     function TOC_compute_cabin_delay()
@@ -164,8 +185,10 @@ else
     end
 
     add_macro("TOC Cabin Crew  - Toggle Cockpit Door", "TOC_toggle_cockpit_door()")
+	add_macro("TOC Cabin Crew  - Close Cockpit Door", "TOC_close_cockpit_door()")
 
     create_command("TOCCabinCrew/Toggle_cockpit_door", "Toggle Cockpit Door", "TOC_toggle_cockpit_door()", "", "")
+	create_command("TOCCabinCrew/Close_cockpit_door", "Close Cockpit Door", "TOC_close_cockpit_door()", "", "")
     ------------------------------------------------------------------------
     -- SCHEDULING
     ------------------------------------------------------------------------
